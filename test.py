@@ -1,89 +1,70 @@
 import pandas as pd
 import numpy as np
 
-# --- Bước 0: Tạo dữ liệu mẫu (Bạn có thể bỏ qua bước này nếu đã có file Excel) ---
-# Đoạn code này tạo một file Excel mẫu để chương trình có thể chạy ngay lập tức.
-try:
-    data = {
-        'Mã sản phẩm': ['SP001', 'SP002', 'SP001', 'SP003', 'SP002', 'SP001', 'SP003'],
-        'Tên sản phẩm': ['Laptop A', 'Mouse B', 'Laptop A', 'Keyboard C', 'Mouse B', 'Laptop A', 'Keyboard C'],
-        'Ngày nhập/xuất': pd.to_datetime(['2023-01-10', '2023-01-11', '2023-01-15', '2023-01-20', '2023-02-01', '2023-02-05', '2023-02-10']),
-        'Số lượng': [50, 200, 30, 150, 100, 20, 80],
-        'Đơn giá': [180000, 85000, 210000, 120000, 95000, 220000, 135000],
-        'Loại giao dịch': ['Nhập', 'Nhập', 'Xuất', 'Nhập', 'Xuất', 'Xuất', 'Xuất']
-    }
-    df_sample = pd.DataFrame(data)
-    df_sample.to_excel("data_nhap_xuat_kho.xlsx", index=False)
-    print("Đã tạo file 'data_nhap_xuat_kho.xlsx' mẫu thành công.")
-except Exception as e:
-    print(f"Lỗi khi tạo file mẫu: {e}")
-
-# --- Chương trình chính ---
-
-def quan_ly_kho(file_path):
+def tinh_toan_kho(file_path="data_nhap_xuat_kho.xlsx", output_file="ket_qua_quan_ly_kho.xlsx"):
     """
-    Hàm đọc dữ liệu từ file Excel, tính toán lợi nhuận, phân loại
-    và lưu kết quả vào một file Excel mới.
+    Hàm đọc dữ liệu kho, tính toán lợi nhuận và phân loại một cách hiệu quả
+    sử dụng các hàm của pandas.
     """
     try:
         # I. Đọc và Xử lý Dữ liệu Đầu vào
         df = pd.read_excel(file_path)
 
-        # Đảm bảo cột ngày tháng được sắp xếp đúng thứ tự để tìm giá nhập gần nhất
+        # Đảm bảo dữ liệu được sắp xếp theo ngày để xử lý logic chính xác
         df = df.sort_values(by='Ngày nhập/xuất').reset_index(drop=True)
 
-        # Tạo các cột mới và khởi tạo giá trị
+        # --- II. Tính toán Lợi nhuận (Cách làm không dùng vòng lặp) ---
+
+        # 1. Tạo một bảng chỉ chứa các giao dịch 'Nhập' và giá nhập gần nhất
+        df_nhap = df[df['Loại giao dịch'] == 'Nhập'].copy()
+        # Giữ lại lần nhập cuối cùng (giá gần nhất) cho mỗi sản phẩm
+        gia_nhap_gan_nhat = df_nhap.drop_duplicates(subset='Mã sản phẩm', keep='last')
+        
+        # Tạo một cột 'Giá nhập' mới bằng cách ánh xạ giá từ bảng trên
+        df['Giá nhập'] = df['Mã sản phẩm'].map(gia_nhap_gan_nhat.set_index('Mã sản phẩm')['Đơn giá'])
+        
+        # Điền các giá trị NaN bằng giá trị liền trước để đảm bảo các giao dịch 'Xuất' có giá nhập
+        df['Giá nhập'] = df['Giá nhập'].fillna(method='ffill')
+
+        # 2. Tính lợi nhuận chỉ cho các giao dịch 'Xuất'
+        # Mặc định lợi nhuận là 0
         df['Lợi nhuận'] = 0.0
-        df['Phân loại Lợi nhuận'] = ''
+        # Dùng np.where để tính toán có điều kiện một cách nhanh chóng
+        df['Lợi nhuận'] = np.where(
+            df['Loại giao dịch'] == 'Xuất',
+            (df['Đơn giá'] - df['Giá nhập']) * df['Số lượng'],
+            0
+        )
+        
+        # --- III. Phân Loại Lợi Nhuận (Cách làm không dùng vòng lặp) ---
 
-        # Dùng dictionary để lưu giá nhập gần nhất của mỗi sản phẩm
-        gia_nhap_gan_nhat = {}
+        # 1. Định nghĩa các điều kiện và kết quả tương ứng
+        conditions = [
+            (df['Loại giao dịch'] == 'Xuất') & (df['Đơn giá'] >= 200000),
+            (df['Loại giao dịch'] == 'Xuất') & (df['Đơn giá'] >= 100000),
+            (df['Loại giao dịch'] == 'Xuất')
+        ]
+        choices = ['Cao', 'Trung bình', 'Thấp']
+        
+        # 2. Dùng np.select để tạo cột phân loại dựa trên các điều kiện trên
+        df['Phân loại Lợi nhuận'] = np.select(conditions, choices, default='')
 
-        # II. Tính toán Lợi nhuận
-        for index, row in df.iterrows():
-            ma_sp = row['Mã sản phẩm']
-            loai_gd = row['Loại giao dịch']
-            don_gia = row['Đơn giá']
+        # --- IV. Cập nhật và Lưu Trữ ---
+        
+        # Xóa cột 'Giá nhập' trung gian nếu không muốn hiển thị trong file kết quả
+        df = df.drop(columns=['Giá nhập'])
 
-            # Nếu là giao dịch 'Nhập', cập nhật giá nhập gần nhất
-            if loai_gd == 'Nhập':
-                gia_nhap_gan_nhat[ma_sp] = don_gia
-            
-            # Nếu là giao dịch 'Xuất', tính toán lợi nhuận
-            elif loai_gd == 'Xuất':
-                gia_ban = don_gia
-                so_luong_xuat = row['Số lượng']
-                
-                # Lấy giá nhập tương ứng từ dictionary
-                gia_nhap = gia_nhap_gan_nhat.get(ma_sp, 0) # Mặc định là 0 nếu không tìm thấy
-
-                if gia_nhap > 0:
-                    loi_nhuan = (gia_ban - gia_nhap) * so_luong_xuat
-                    df.at[index, 'Lợi nhuận'] = loi_nhuan
-                    
-                    # III. Phân Loại Lợi Nhuận
-                    if gia_ban >= 200000:
-                        df.at[index, 'Phân loại Lợi nhuận'] = 'Cao'
-                    elif 100000 <= gia_ban < 200000:
-                        df.at[index, 'Phân loại Lợi nhuận'] = 'Trung bình'
-                    else:
-                        df.at[index, 'Phân loại Lợi nhuận'] = 'Thấp'
-
-        # IV. Cập nhật và Lưu Trữ
-        output_file = "ket_qua_quan_ly_kho.xlsx"
         df.to_excel(output_file, index=False)
         
-        print("\nHoàn tất xử lý!")
-        print(f"Kết quả đã được lưu vào file: '{output_file}'")
+        print(f"✅ Hoàn tất xử lý! Kết quả đã được lưu vào file: '{output_file}'")
         print("\nXem trước 5 dòng kết quả:")
         print(df.head())
 
     except FileNotFoundError:
-        print(f"Lỗi: Không tìm thấy file '{file_path}'. Vui lòng kiểm tra lại đường dẫn.")
+        print(f"❌ Lỗi: Không tìm thấy file '{file_path}'. Vui lòng kiểm tra lại.")
     except Exception as e:
-        print(f"Đã xảy ra lỗi không mong muốn: {e}")
+        print(f"❌ Đã xảy ra lỗi không mong muốn: {e}")
 
 # --- Thực thi chương trình ---
 if __name__ == "__main__":
-    file_excel = "data_nhap_xuat_kho.xlsx"
-    quan_ly_kho(file_excel)
+    tinh_toan_kho()
